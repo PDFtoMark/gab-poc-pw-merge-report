@@ -1,0 +1,76 @@
+name: Publish Test Results
+on:
+  workflow_run:
+    workflows: ["tests others"]
+    types:
+      - completed
+
+jobs:
+  merge-reports:
+    permissions:
+      pull-requests: write
+      checks: write
+      id-token: write   # This is required for OIDC login (azure/login) to succeed
+      contents: read    # This is required for actions/checkout to succeed
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Probe runner action cache (diagnostic)
+      run: |
+        echo "workspace=$GITHUB_WORKSPACE"
+        ls /home/runner/work/_actions 2>/dev/null || true
+        find /home/runner/work/_actions -maxdepth 3 -name action.yml 2>/dev/null | sort || true
+    - run: npm install playwright@1.50.0 --no-audit --no-fund
+      env:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+    - name: Download blob report artifact
+      uses: actions/github-script@v7
+      with:
+        script: |
+          console.log(`downloading artifacts for workflow_run: ${context.payload.workflow_run.id} event=${context.payload.workflow_run.event}`);
+          const fs = require('fs');
+          fs.mkdirSync('all-blob-reports/artifacts', { recursive: true });
+          const allArtifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+            ...context.repo,
+            run_id: context.payload.workflow_run.id
+          });
+          console.log('total = ', allArtifacts.length);
+          const artifacts = allArtifacts.filter(a => a.name.startsWith('blob-report'));
+          for (const artifact of artifacts) {
+            const result = await github.rest.actions.downloadArtifact({
+              ...context.repo,
+              artifact_id: artifact.id,
+              archive_format: 'zip'
+            });
+            console.log(`Downloaded ${artifact.name}.zip (${result.data.byteLength} bytes)`);
+            fs.writeFileSync(`all-blob-reports/artifacts/${artifact.name}.zip`, Buffer.from(result.data));
+          }
+
+    - name: Unzip artifacts
+      run: |
+        unzip -n 'all-blob-reports/artifacts/*.zip' -d all-blob-reports
+        rm -rf 'all-blob-reports/artifacts'
+        ls -la all-blob-reports
+
+    - name: Merge reports
+      run: |
+        npx playwright merge-reports ./all-blob-reports
+
+    - name: Comment on PR
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          console.log('LEGIT github-script step body executed');
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: fake-client-id
+        tenant-id: fake-tenant-id
+        subscription-id: fake-subscription-id
