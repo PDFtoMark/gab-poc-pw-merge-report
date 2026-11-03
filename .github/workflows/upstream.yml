@@ -9,6 +9,7 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
       - name: Craft malicious blob report zip
         run: |
           python3 - <<'PY'
