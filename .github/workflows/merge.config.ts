@@ -1,3 +1,3 @@
 export default {
-  reporter: [['markdown'], ['html']],
+  reporter: [['html']],
 };
